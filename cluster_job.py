@@ -1,6 +1,6 @@
 #! /usr/bin/python -u
 __author__  = "Marco Mariotti"
-__email__   = "youremail@domain.com"
+__email__   = "marco.mariotti@crg.cat"
 __licence__ = "GPLv3"
 __version__ = "0.1"
 from string import *
