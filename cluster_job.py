@@ -2,9 +2,10 @@
 __author__  = "Marco Mariotti"
 __email__   = "marco.mariotti@crg.cat"
 __licence__ = "GPLv3"
-__version__ = "0.1"
+__version__ = "0.2"
 from string import *
 import sys
+import traceback
 from commands import *
 from MMlib import *
 #### default options:
@@ -109,7 +110,7 @@ We suggest to include your custom alias definition in your .bashrc file, so that
 If you have permissions, you may instead open directly your copy of cluster_job.py and modify it. All default options are defined in the very beginning of the file, through a dictionary called def_opt.
 
 """
-not_my_email_err="""Hey! get your own -email ;)\n"""+set_default_help
+not_my_email_err="""Hey! get your own -email ;) \n\nHere's the help page to avoid typing this option every time:\n\n"""+set_default_help
 
 command_line_synonyms={'Q':'qsub', 'nj':'n_jobs', 'nl':'n_lines', 'force':'f'}
 
@@ -138,21 +139,24 @@ def main(args={}):
   global input_file;   input_file=opt['i'];
   if input_file=='-':  input_file_h=sys.stdin
   else:
-    check_file_presence(input_file, 'input_file')
+    check_file_presence(input_file, 'input_file', notracebackException)
     input_file_h=open(input_file)
 
-  if opt['email']=='youremail@domain.com' and bbash('whoami')!='mmariotti' and opt['E']: raise Exception, not_my_email_err
+  if opt['email']=='youremail@domain.com' and bbash('whoami')!='mmariotti' and opt['E']: raise notracebackException, not_my_email_err
 
-  cmd_lines= [ line.strip() for line in input_file_h if line.strip() ]    ## loading whole file
-  # number of jobs, number of lines
+  cmd_lines= [ line.strip() for line in input_file_h if line.strip() and not line.strip().startswith("#") ]    ## loading whole file
+  # determining number of jobs, number of lines
   tot_lines=len(cmd_lines)
 #  single_job_mode=False
-  if not opt['n_lines'] and not opt['n_jobs']:
+  if tot_lines==0:    raise notracebackException, "ERROR input file is empty!"
+  if tot_lines==1:
+    array_mode=False; n_lines_per_job=1; n_jobs=1
+  elif not opt['n_lines'] and not opt['n_jobs']:
     array_mode=True
     #if tot_lines==1: single_job_mode=True
   else:
     array_mode=False
-    if opt['r']: raise Exception, "ERROR option -r (job range in array) available only in array mode! options -nl and -nj must be inactive (or set to zero) to enter array mode"
+    if opt['r']: raise notracebackException, "ERROR option -r (job range in array) available only in array mode! options -nl and -nj must be inactive (or set to zero) to enter array mode"
     if opt['n_jobs']:   n_lines_per_job= float(  tot_lines ) / int(opt['n_jobs'])
     if opt['n_lines']:  n_lines_per_job= opt['n_lines']
     n_jobs=  (tot_lines-1) / n_lines_per_job +1
@@ -167,22 +171,24 @@ def main(args={}):
     output_folder= input_file+'.jbs'
 
   ######### names and commands including expressions
-  if not cmd_e is None and array_mode: raise Exception, 'ERROR -c cmdEXPR is not available in job array mode. Use either  -nl number_of_lines   or   -nj number_of_jobs  ; please run with -h for more information'
+  if not cmd_e is None and array_mode: raise notracebackException, 'ERROR -c cmdEXPR is not available in job array mode. Use either  -nl number_of_lines   or   -nj number_of_jobs  ; please run with -h for more information'
   if not array_mode and cmd_e is None: cmd_e="x"  # standing for: execute full line
   if not name_e is None:
-    if array_mode: raise Exception, 'ERROR -n nameEXPR is not available in job array mode. Use either  -nl number_of_lines   or   -nj number_of_jobs ; please run with -h for more information'
+    if array_mode: raise notracebackException, 'ERROR -n nameEXPR is not available in job array mode. Use either  -nl number_of_lines   or   -nj number_of_jobs ; please run with -h for more information'
   else:
     if opt['N']:   prefix_name=opt['N'].rstrip('.')
-    else:          prefix_name=base_filename( input_file )
+    else:
+      if input_file=='-': raise notracebackException, "ERROR you must specify job name with -N if reading from standard input!"
+      prefix_name=base_filename( input_file )
     if not array_mode: name_e='"'+prefix_name+'."+n_job'
   ### at this stage, if array_mode we have prefix_name ; if not array_mode we have name_e and cmd_e
 
   if is_directory(output_folder):
     if not opt['f']:
       if not raw_input("Jobs folder "+output_folder+" existing from a previous run;  overwrite? will delete previous logs if present [Y] \n") in ['', 'Y', 'y', 'yes']:
-        raise Exception, "Aborted. "
+        raise notracebackException, "Aborted. "
     bash('rm -r '+output_folder);
-  output_folder=Folder(output_folder);  test_writeable_folder(output_folder);
+  output_folder=Folder(output_folder);
   email= opt['email']
 
   ### determining header command, present in every job file
@@ -226,9 +232,9 @@ def main(args={}):
     """ Takes the command list, plus all other variables computed and available in namespace, prepares an array file and submit it if necessary"""
     header="#!/bin/bash\n#$ -S /bin/bash\n#$ -cwd\n#$ -M "+email+ additional_options+"\n"+queue_line+time_line+"#$ -N "+name+"\n#$ -e "+outfile+".$TASK_ID.LOGERR\n#$ -o "+outfile+".$TASK_ID.LOG\n#$ -pe smp "+str(opt['p'])+"\n#$ -l virtual_free="+str(opt['m'])+"G\n"
     header+="#$ -t "+range_str+"\n"
-    exec_cmd="""awk -v task_id=$SGE_TASK_ID -F"#" 'BEGIN{pat="^# " task_id "# " }$0 ~ pat{system( substr($0, length($2)+4) )} ' """+outfile+'\n'
-    out_text=header+init_command.rstrip('\n')+'\n'+ exec_cmd + join([ '# '+str(index+1)+'# '+cmd.rstrip('\n') for index, cmd in enumerate(cmd_list)], '\n' )+     footer_command
-    write('Writing array file: '+outfile)
+    exec_cmd="""awk -v task_id=$SGE_TASK_ID -F"#" 'BEGIN{pat="^#" task_id "# " }$0 ~ pat{system( substr($0, length($2)+4) )} ' """+outfile+'\n'
+    out_text=header+init_command.rstrip('\n')+'\n'+ exec_cmd + join([ '#'+str(index+1)+'# '+cmd.rstrip('\n') for index, cmd in enumerate(cmd_list)], '\n' )+     footer_command
+    write('Writing array file ('+str(len(cmd_list))+' jobs): '+outfile)
     write_to_file(out_text, outfile)
     if opt['qsub']:
       write(' \tsubmitting file!')
@@ -279,22 +285,23 @@ def main(args={}):
 
   write('', 1)
 
+class notracebackException(Exception):
+  """ When these exceptions are raised, the traceback is not printed, just a short message """
+
 #######################################################################################################################################
-""" ## from my prog template, never useful for this script
 def close_program():
-  if 'temp_folder' in globals() and is_directory(temp_folder):
-    bbash('rm -r '+temp_folder)
-  try:
-    if get_MMlib_var('printed_rchar'):
-      printerr('\r'+printed_rchar*' ' ) #flushing service msg space
-  except:
-    pass
-  if 'log_file' in globals(): log_file.close()
-"""
+  if sys.exc_info()[0]: #an exception was raised. let's print the information using printerr, shortened if it was a notracebackException
+    if issubclass(sys.exc_info()[0], notracebackException):
+      printerr( sys.exc_info()[1], 1)
+      sys.exit(1)
+    elif issubclass(sys.exc_info()[0], SystemExit):      pass
+    else:
+      printerr('ERROR '+ traceback.format_exc( sys.exc_info()[2]) , 1)   #printing exception in usual format
+      sys.exit(2)
+
 if __name__ == "__main__":
-#  try:
+  try:
     main()
-#    close_program()
-#  except Exception:
-#    close_program()
-#    raise
+    close_program()
+  except Exception:
+    close_program()
