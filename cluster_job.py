@@ -9,6 +9,22 @@ import traceback
 from commands import *
 from MMlib import *
 #### default options:
+header_template="""#!/bin/bash
+#$ -S /bin/bash
+#$ -cwd
+#$ -M {email} {queue_line}{time_line}{additional_options}
+#$ -N {name}
+#$ -l virtual_free={mem}G {pe} 
+"""
+header_single_job=header_template+"""#$ -e {outfile}.LOGERR
+#$ -o {outfile}.LOG
+"""
+header_array_job=header_template+"""#$ -e {outfile}.$TASK_ID.LOGERR
+#$ -o {outfile}.$TASK_ID.LOG
+#$ -t {range_str}
+"""
+pe_template="\n#$ -pe smp {procs}"   ## for n of processors; not available in all systems
+
 def_opt= {'i':0,  'o':0, 'n':None, 'c':None, 'H':0, 'qsub':0, 'p':1, 'm':12, 'N':0, 't':6, 'v':0, 'n_lines':0, 'n_jobs':0, 'F':0, 'r':None,
 'q':'queue1,queue2', 'bin':'~/bin', 'email':'youremail@domain.com', 'E':'a', 'e':0, 'f':0, 'x':0,
 'q_syn':'S=queue1,queue2;L=queue3,queue2' }
@@ -32,9 +48,9 @@ Usage #2 (clusters of jobs)     cluster_job.py input_file [output_folder] [name_
 When array mode is off, options -n and -c are available to control dynamically job name and content. See advanced help with -h full
 
 -q      +   queue name(s), comma separated; synonyms can be also used. These can be set with -q_syn. See -h default
--p      +   number of processors requested
 -m      +   GB of memory requested
 -t      +   time limit requested in hours  (sge option -l h_rt)
+-p      +   number of processors requested, if smp is available. Use -p 0 to not specify processors
 
 -bin    +   in every job, the PATH variable is set to include this folder before any other
 -H      +   file with a header command, that is executed in every job before the input commands
@@ -107,8 +123,7 @@ After this, you call the program with all your custome default values simply wit
 We suggest to include your custom alias definition in your .bashrc file, so that it will be available in any terminal you open.
 
 2. Editing the script
-If you have permissions, you may instead open directly your copy of cluster_job.py and modify it. All default options are defined in the very beginning of the file, through a dictionary called def_opt.
-
+If you have permissions, you may instead open directly your copy of cluster_job.py and modify it. All default options are defined in the very beginning of the file, through "header" variables, and a dictionary called def_opt.
 """
 not_my_email_err="""Hey! get your own -email ;) \n\nHere's the help page to avoid typing this option every time:\n\n"""+set_default_help
 
@@ -207,20 +222,24 @@ def main(args={}):
       queue_synonyms[syn_name]=queue
   queue_name=opt['q']
   if queue_name in queue_synonyms: queue_name=queue_synonyms[queue_name]
-  if queue_name: queue_line= "#$ -q "+queue_name+"\n"
+  if queue_name: queue_line= "\n#$ -q "+queue_name
   else:          queue_line= ""
 
   ## time constraint
-  if opt['t']:   time_line="#$ -l h_rt="+str(opt['t'])+":00:00\n"
+  if opt['t']:   time_line="\n#$ -l h_rt="+str(opt['t'])+":00:00"
   else:          time_line=""
 
   additional_options=''
   if opt['E']:          additional_options+='\n#$ -m '+opt['E']+' '
   if not opt['e']:      additional_options+='\n#$ -V '
+  
+  pe_specs=pe_template.format(procs=opt['p']) if opt['p'] else ''
+  mem=opt['m']
 
   def write_job(cmd, name, outfile):
     """ Takes the command, plus all other variables computed and available in namespace, prepares a single job file and submit it if necessary"""
-    header="#!/bin/bash\n#$ -S /bin/bash\n#$ -cwd\n#$ -M "+email+ additional_options+"\n"+queue_line+time_line+"#$ -N "+name+"\n#$ -e "+outfile+".LOGERR\n#$ -o "+outfile+".LOG\n#$ -pe smp "+str(opt['p'])+"\n#$ -l virtual_free="+str(opt['m'])+"G\n"
+    header=header_single_job.format(email=email, additional_options=additional_options, queue_line=queue_line, 
+                                    time_line=time_line, name=name, outfile=outfile, pe=pe_specs, mem=mem)
     write('Writing file: '+outfile)
     write_to_file(header +init_command.rstrip('\n')+'\n'+cmd.rstrip('\n')+'\n'+footer_command, outfile)
     if opt['qsub']:
@@ -230,8 +249,9 @@ def main(args={}):
 
   def write_array_job(cmd_list, name, outfile, range_str):
     """ Takes the command list, plus all other variables computed and available in namespace, prepares an array file and submit it if necessary"""
-    header="#!/bin/bash\n#$ -S /bin/bash\n#$ -cwd\n#$ -M "+email+ additional_options+"\n"+queue_line+time_line+"#$ -N "+name+"\n#$ -e "+outfile+".$TASK_ID.LOGERR\n#$ -o "+outfile+".$TASK_ID.LOG\n#$ -pe smp "+str(opt['p'])+"\n#$ -l virtual_free="+str(opt['m'])+"G\n"
-    header+="#$ -t "+range_str+"\n"
+    header=header_array_job.format(email=email, additional_options=additional_options, queue_line=queue_line, 
+                                    time_line=time_line, name=name, outfile=outfile, pe=pe_specs, mem=mem,
+                                    range_str=range_str)
     exec_cmd="""awk -v task_id=$SGE_TASK_ID -F"#" 'BEGIN{pat="^#" task_id "# " }$0 ~ pat{system( substr($0, length($2)+4) )} ' """+outfile+'\n'
     out_text=header+init_command.rstrip('\n')+'\n'+ exec_cmd + join([ '#'+str(index+1)+'# '+cmd.rstrip('\n') for index, cmd in enumerate(cmd_list)], '\n' )+     footer_command
     write('Writing array file ('+str(len(cmd_list))+' jobs): '+outfile)
