@@ -2,37 +2,56 @@
 __author__  = "Marco Mariotti"
 __email__   = "marco.mariotti@crg.cat"
 __licence__ = "GPLv3"
-__version__ = "0.2"
+__version__ = "0.3"
 from string import *
 import sys
 import traceback
 from commands import *
 from MMlib import *
 #### default options:
-header_template="""#!/bin/bash
+def_opt= {'i':0,  'o':0, 'n':None, 'c':None, 'H':0, 'qsub':0, 'p':1, 'm':12, 'N':0, 't':6, 'v':0, 'n_lines':0, 'n_jobs':0, 'F':0, 'r':None,
+'q':'queue1,queue2', 'bin':'~/bin', 'email':'youremail@domain.com', 'E':'a', 'e':0, 'f':0, 'x':0, 'joe':0, 'sl':0, 'so':'', 
+'tp':'smp', 'sys':'sge', 'q_syn':'S=queue1,queue2;L=queue3,queue2' }
+
+#### templates:
+sge_header_template="""#!/bin/bash
 #$ -S /bin/bash
 #$ -cwd
 #$ -M {email} {queue_line}{time_line}{additional_options}
 #$ -N {name}
-#$ -l virtual_free={mem}G {pe} 
+#$ -l virtual_free={mem}G {cpus} 
 """
-header_single_job=header_template+"""#$ -e {outfile}.LOGERR
-#$ -o {outfile}.LOG
+sge_header_single_job=sge_header_template+"""#$ -e {logerr}
+#$ -o {logout}
 """
-header_array_job=header_template+"""#$ -e {outfile}.$TASK_ID.LOGERR
-#$ -o {outfile}.$TASK_ID.LOG
+sge_header_array_job=sge_header_template+"""#$ -e {logerr}
+#$ -o {logout}
 #$ -t {range_str}
 """
-pe_template="\n#$ -pe smp {procs}"   ## for n of processors; not available in all systems
 
-def_opt= {'i':0,  'o':0, 'n':None, 'c':None, 'H':0, 'qsub':0, 'p':1, 'm':12, 'N':0, 't':6, 'v':0, 'n_lines':0, 'n_jobs':0, 'F':0, 'r':None,
-'q':'queue1,queue2', 'bin':'~/bin', 'email':'youremail@domain.com', 'E':'a', 'e':0, 'f':0, 'x':0,
-'q_syn':'S=queue1,queue2;L=queue3,queue2' }
 
-help_msg="""Program to split and manage command lines, to write job files to be submitted to a SGE cluster. The input file must contain one line for each bash command that can be parallelized.
+sge_pe_template=  "\n#$ -pe {tp} {procs}"   ## for n of processors; not available in all systems
+slurm_pe_template="\n#SBATCH -n {procs}"   ## for n of processors; not available in all systems
+
+slurm_header_template="""#!/bin/bash       
+#SBATCH -J {name} {queue_line}{time_line}{additional_options}{cpus}
+#SBATCH --mail-user={email}
+#SBATCH --mem={mem}G
+"""
+
+slurm_header_single_job=slurm_header_template+"""#SBATCH -e {logerr}
+#SBATCH -o {logout}
+"""
+slurm_header_array_job= slurm_header_template+"""#SBATCH -e {logerr}
+#SBATCH -o {logout}
+#SBATCH -a {range_str}
+"""
+
+
+help_msg="""Program to split and manage command lines, to write job files to be submitted to a SGE or Slurm cluster. The input file must contain one line for each bash command that can be parallelized.
 By default, an array job file is prepared inside the output folder with one entry for each line in input. Otherwise, the lines are split into a number of job files according to options -n_jobs (-nj) or -n_lines (-nl).
 Option -N can be used to give a name to the jobs: if provided argument is "JobZ" for example, job names will be JobZ.1, JobZ.2 etc.
-Other options can be used to set SGE job variables, such as the queue name, memory and cpu requirements etc.
+Other options can be used to set job variables, such as the queue name, memory and cpu requirements etc.
 
 Usage #1 (array mode, default)  cluster_job.py input_file [output_folder] [name_prefix]
 Usage #2 (clusters of jobs)     cluster_job.py input_file [output_folder] [name_prefix] [-n_jobs N | -n_lines M]
@@ -41,26 +60,32 @@ Usage #2 (clusters of jobs)     cluster_job.py input_file [output_folder] [name_
 -i      +   input file. Use '-' for standard input
 -o      +   output folder. Default is input file name plus ".jbs"
 -N      +   define name of jobs with this prefix. Default is input file name
+-sys    +   cluster system; possible values: sge (default) or slurm
 
--r     S-E        in array mode, defines range of jobs executed. Wraps qsub option -t. Defaults to all jobs
 -n_lines | -nl +  set this to have x lines of input commands in each job. Turns off array mode
 -n_jobs  | -nj +  set this to have a number of jobs x. Overrides -n_lines and turns off array mode
-When array mode is off, options -n and -c are available to control dynamically job name and content. See advanced help with -h full
 
 -q      +   queue name(s), comma separated; synonyms can be also used. These can be set with -q_syn. See -h default
 -m      +   GB of memory requested
--t      +   time limit requested in hours  (sge option -l h_rt)
--p      +   number of processors requested, if smp is available. Use -p 0 to not specify processors
+-t      +   time limit requested in hours  (add m suffix to make it minutes, e.g. -t 30m)
+-p      +   number of processors requested. Use -p 0 to not specify processors
+            Note: in sge, the parallelization type is smp by default, use -tp to specify it (e.g. -tp shm)
 
 -bin    +   in every job, the PATH variable is set to include this folder before any other
 -H      +   file with a header command, that is executed in every job before the input commands
 -F      +   file with a footer command, that is executed in every job after the input commands
+-joe        join std output and error logfiles; so that every job produce a single output file
+-sl         use a single log file for all jobs, instead of one output and one error per job
 -e          do not export the current environment variables in the job (do not use option -V in qsub)
 -email  +   email provided when submitting job
--E      +   option -m of qsub; send an email in conditions determined by the argument. Multiple arguments can be concatenated, e.g. -E abe
-        'b': at the beginning of the job; 'e': end of the job; 'a': if aborted or rescheduled; 's': suspended.
+-E      +   send an email in conditions determined by the argument. Multiple arguments can be concatenated, e.g. -E abe
+        b:  at the beginning of the job;          e:  end of the job; 
+        a:  if aborted (or rescheduled in sge);   s:  suspended <sge only>;     v:  verbose, mails for anything
+-r     s-e  in array mode only, defines range of jobs executed (start-end). Wraps qsub option -t. Defaults to all jobs
+When array mode is off, options -n and -c are available to control dynamically job name and content. See advanced help with -h full
 
--qsub | -Q  submit the jobs with qsub
+-qsub | -Q  submit the jobs 
+-so         options to submit; provided directly to qsub (sge) or sbatch (slurm). Use quotes, e.g. -so " -tc 5 "
 -f          force overwrite of jobs folder if existing. By default, it prompts.
 
 -print_opt     prints default values for all options
@@ -112,6 +137,7 @@ This will produce 4 files:
  g_scan/Drosophila_grimshawi    # job name: Drosophila_grimshawi    # content:  scan_genome /home/genomes/Drosophila_grimshawi/genome.fa
  g_scan/Drosophila_melanogaster # job name: Drosophila_melanogaster # content:  scan_genome /home/genomes/Drosophila_melanogaster/genome.fa
 """
+
 set_default_help="""######## How to set default values for options
 Typically, each user of this program will use cluster_job.py with the same options, adapted to the system.
 There are two ways to achieve this.
@@ -149,11 +175,14 @@ def main(args={}):
   else:  opt=args
   set_MMlib_var('opt', opt)
 
-  write('                         [   '); write('cluster_job v'+__version__, how='reverse'); write('   ]                         ', 1)
+  if not opt['sys'] in ['sge', 'slurm']:    raise notracebackException, 'ERROR -sys  must be one of either sge, slurm'
+  write('   --['); write('{:^50}'.format( 'cluster_job v{ver} ({s})'.format(ver=__version__, s=opt['sys']) ),  how='reverse'); write(']--', 1)
+
   #checking input
   global input_file;   input_file=opt['i'];
   if input_file=='-':  input_file_h=sys.stdin
   else:
+    if input_file==1: raise notracebackException, "ERROR you must specify an input file with -i"
     check_file_presence(input_file, 'input_file', notracebackException)
     input_file_h=open(input_file)
 
@@ -222,52 +251,112 @@ def main(args={}):
       queue_synonyms[syn_name]=queue
   queue_name=opt['q']
   if queue_name in queue_synonyms: queue_name=queue_synonyms[queue_name]
-  if queue_name: queue_line= "\n#$ -q "+queue_name
-  else:          queue_line= ""
-
-  ## time constraint
-  if opt['t']:   time_line="\n#$ -l h_rt="+str(opt['t'])+":00:00"
-  else:          time_line=""
-
+  time_limit_minutes=None
+  if opt['t']:   time_limit_minutes=int(opt['t'][:-1])  if str(opt['t']).endswith('m') else int(opt['t'])*60
   additional_options=''
-  if opt['E']:          additional_options+='\n#$ -m '+opt['E']+' '
-  if not opt['e']:      additional_options+='\n#$ -V '
-  
-  pe_specs=pe_template.format(procs=opt['p']) if opt['p'] else ''
-  mem=opt['m']
 
-  def write_job(cmd, name, outfile):
+  if   opt['sys']=='sge':
+    ## queue or partition
+    queue_line= "\n#$ -q {}".format(queue_name) if queue_name else ''
+    ## time constraint
+    time_line='\n#$ -l h_rt={h}:{m}:00'.format(h=time_limit_minutes/60, m=time_limit_minutes%60)  if not time_limit_minutes is None else ''
+    ## email
+    if opt['E']:          additional_options+='\n#$ -m {} '.format(opt['E']  if not opt['E']=='v' else 'abes')
+    ## environmental vars
+    if not opt['e']:      additional_options+='\n#$ -V '
+    ## cpus
+    cpu_specs=sge_pe_template.format(procs=opt['p'], tp=opt['tp'])     if opt['p'] else ''
+   
+  elif opt['sys']=='slurm':
+    ## queue or partition
+    queue_line= "\n#SBATCH -p {}".format(queue_name) if queue_name else ''
+    ## time constraint
+    time_line=  '\n#SBATCH -t 0-{h}:{m}'.format(h=time_limit_minutes/60, m=time_limit_minutes%60)  if not time_limit_minutes is None else ''
+    ## email
+    if opt['E']:          
+      sge_mail_codes2slurm_code={'a':'FAIL', 'b':'BEGIN', 'e':'END', 'v':'ALL'}
+      for code in opt['E']: 
+        if not code in sge_mail_codes2slurm_code: raise notracebackException, "ERROR this -E option is not valid for slurm: {}".format(code)
+        additional_options+='\n#SBATCH --mail-type={}'.format(sge_mail_codes2slurm_code[code])
+    ## environmental vars
+    if not opt['e']:        additional_options+='\n#SBATCH --export ALL'
+    ## cpus
+    cpu_specs=slurm_pe_template.format(procs=opt['p']) if opt['p'] else ''
+
+  mem=opt['m']
+  add_options=opt['so']
+  suffix_out='LOG'
+  suffix_err='ERR' if not opt['joe'] else 'LOG'
+
+  def write_job(cmd, name, outfile, output_folder):
     """ Takes the command, plus all other variables computed and available in namespace, prepares a single job file and submit it if necessary"""
-    header=header_single_job.format(email=email, additional_options=additional_options, queue_line=queue_line, 
-                                    time_line=time_line, name=name, outfile=outfile, pe=pe_specs, mem=mem)
+    logout='{outfile}.{suf}'.format(outfile=outfile, suf=suffix_out)
+    logerr='{outfile}.{suf}'.format(outfile=outfile, suf=suffix_err)
+    if opt['sl']:
+      logout='{outfolder}output_all_jobs.{suf}'.format(outfolder=output_folder, suf=suffix_out)
+      logerr='{outfolder}output_all_jobs.{suf}'.format(outfolder=output_folder, suf=suffix_err)
+
     write('Writing file: '+outfile)
+    if   opt['sys']=='sge':
+      header=sge_header_single_job.format(email=email, additional_options=additional_options, queue_line=queue_line, 
+                                          time_line=time_line, name=name, outfile=outfile, cpus=cpu_specs, mem=mem,
+                                          logout=logout, logerr=logerr)
+    elif opt['sys']=='slurm':
+      append_add='\n#SBATCH --open-mode=append'  if opt['sl'] else ''
+      header=slurm_header_single_job.format(email=email, additional_options=additional_options + append_add , queue_line=queue_line, 
+                                            time_line=time_line, name=name, outfile=outfile, cpus=cpu_specs, mem=mem,
+                                            logout=logout, logerr=logerr)
+
     write_to_file(header +init_command.rstrip('\n')+'\n'+cmd.rstrip('\n')+'\n'+footer_command, outfile)
     if opt['qsub']:
       write(' \tsubmitting file!')
-      bbash('qsub '+outfile)
+      if   opt['sys']=='sge':    bbash('qsub   {} {} '.format(add_options,  outfile))
+      elif opt['sys']=='slurm':  bbash('sbatch {} {} '.format(add_options,  outfile)) 
     write('', 1)
 
-  def write_array_job(cmd_list, name, outfile, range_str):
+  def write_array_job(cmd_list, name, outfile, s,e, output_folder):
     """ Takes the command list, plus all other variables computed and available in namespace, prepares an array file and submit it if necessary"""
-    header=header_array_job.format(email=email, additional_options=additional_options, queue_line=queue_line, 
-                                    time_line=time_line, name=name, outfile=outfile, pe=pe_specs, mem=mem,
-                                    range_str=range_str)
-    exec_cmd="""awk -v task_id=$SGE_TASK_ID -F"#" 'BEGIN{pat="^#" task_id "# " }$0 ~ pat{system( substr($0, length($2)+4) )} ' """+outfile+'\n'
-    out_text=header+init_command.rstrip('\n')+'\n'+ exec_cmd + join([ '#'+str(index+1)+'# '+cmd.rstrip('\n') for index, cmd in enumerate(cmd_list)], '\n' )+     footer_command
     write('Writing array file ('+str(len(cmd_list))+' jobs): '+outfile)
+    if   opt['sys']=='sge':
+      logout='{outfile}.$TASK_ID.{suf}'.format(outfile=outfile, suf=suffix_out)
+      logerr='{outfile}.$TASK_ID.{suf}'.format(outfile=outfile, suf=suffix_err)
+      if opt['sl']: 
+        logout='{outfile}.{suf}'.format(outfile=outfile, suf=suffix_out)
+        logerr='{outfile}.{suf}'.format(outfile=outfile, suf=suffix_err)
+
+      header=sge_header_array_job.format(email=email, additional_options=additional_options, queue_line=queue_line, 
+                                          time_line=time_line, name=name, outfile=outfile, cpus=cpu_specs, mem=mem,
+                                          logout=logout, logerr=logerr,
+                                          range_str='{}-{}'.format(s,e))
+      exec_cmd="""awk -v task_id=$SGE_TASK_ID -F"#" 'BEGIN{pat="^#" task_id "# "}$0 ~ pat{system(substr($0, length($2)+4))}' """+outfile+'\n'
+    elif opt['sys']=='slurm':
+      logout='{outfile}.%a.LOG'.format(outfile=outfile)
+      logerr='{outfile}.%a.ERR'.format(outfile=outfile)
+      if opt['sl']: 
+        logout='{outfile}.{suf}'.format(outfile=outfile, suf=suffix_out)
+        logerr='{outfile}.{suf}'.format(outfile=outfile, suf=suffix_err)
+      append_add='\n#SBATCH --open-mode=append'  if opt['sl'] else ''        
+
+      header=slurm_header_array_job.format(email=email, additional_options=additional_options+append_add, queue_line=queue_line, 
+                                            time_line=time_line, name=name, outfile=outfile, cpus=cpu_specs, mem=mem,
+                                           logout=logout, logerr=logerr,
+                                            range_str='{}-{}'.format(s,e)) 
+      exec_cmd="""awk -v task_id=$SLURM_ARRAY_TASK_ID -F"#" 'BEGIN{pat="^#" task_id "# "}$0 ~ pat{system(substr($0, length($2)+4))}' """+outfile+'\n'
+
+    out_text=header+init_command.rstrip('\n')+'\n'+ exec_cmd + join([ '#'+str(index+1)+'# '+cmd.rstrip('\n') for index, cmd in enumerate(cmd_list)], '\n' )+     footer_command
     write_to_file(out_text, outfile)
     if opt['qsub']:
       write(' \tsubmitting file!')
-      bbash('qsub '+outfile)
-      write('', 1)
+      if   opt['sys']=='sge':    bbash('qsub   {} {} '.format(add_options,  outfile))
+      elif opt['sys']=='slurm':  bbash('sbatch {} {} '.format(add_options,  outfile)) 
 
   #####################
   if array_mode:
     name=prefix_name
     outfile=abspath(output_folder+name)
-    if opt['r']: range_str=opt['r']
-    else:        range_str='1-'+str(len(cmd_lines))
-    write_array_job(cmd_lines, name, outfile, range_str)
+    if opt['r']:       s,e=map(int, opt['r'].split('-'))
+    else:              s,e=1,len(cmd_lines)
+    write_array_job(cmd_lines, name, outfile, s,e, output_folder)
   else:
   ## from here it goes only if we're not in array job mode
   #cycling file ;   producing a "cmd" variable with all the lines to put in a job; then we write (and submit it)
@@ -292,7 +381,7 @@ def main(args={}):
       n_job=int(n_job)
 
       if lines_up_to_now >= n_lines_per_job*n_job: # enough lines. lets' write to a file (and submit)
-        write_job(cmd, name, outfile)
+        write_job(cmd, name, outfile, output_folder)
         cmd=''
         n_job+=1
 
@@ -301,7 +390,7 @@ def main(args={}):
 
     #remaining lines
     if cmd.strip().split():
-      write_job(cmd, name, outfile)
+      write_job(cmd, name, outfile, output_folder)
 
   write('', 1)
 
