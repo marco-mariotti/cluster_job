@@ -10,7 +10,7 @@ from commands import *
 from MMlib import *
 #### default options:
 def_opt= {'i':0,  'o':0, 'n':None, 'c':None, 'H':0, 'qsub':0, 'p':1, 'm':12, 'N':0, 't':6, 'v':0, 'n_lines':0, 'n_jobs':0, 'F':0, 'r':None,
-'q':'queue1,queue2', 'bin':'~/bin', 'email':'youremail@domain.com', 'E':'a', 'e':0, 'f':0, 'x':0, 'joe':0, 'sl':0, 'so':'', 
+'q':'queue1,queue2', 'bin':'~/bin', 'email':'youremail@domain.com', 'E':'a', 'e':0, 'f':0, 'x':0, 'joe':0, 'sl':0, 'so':'', 'srun':0,
 'tp':'smp', 'sys':'sge', 'q_syn':'S=queue1,queue2;L=queue3,queue2' }
 
 #### templates:
@@ -31,7 +31,7 @@ sge_header_array_job=sge_header_template+"""#$ -e {logerr}
 
 
 sge_pe_template=  "\n#$ -pe {tp} {procs}"   ## for n of processors; not available in all systems
-slurm_pe_template="\n#SBATCH -n {procs}"   ## for n of processors; not available in all systems
+slurm_pe_template="\n#SBATCH -c {procs}"   ## for n of processors; not available in all systems
 
 slurm_header_template="""#!/bin/bash       
 #SBATCH -J {name} {queue_line}{time_line}{additional_options}{cpus}
@@ -67,15 +67,15 @@ Usage #2 (clusters of jobs)     cluster_job.py input_file [output_folder] [name_
 
 -q      +   queue name(s), comma separated; synonyms can be also used. These can be set with -q_syn. See -h default
 -m      +   GB of memory requested
--t      +   time limit requested in hours  (add m suffix to make it minutes, e.g. -t 30m)
+-t      +   time limit requested in hours  (add m suffix to make it minutes, or d to make it days; e.g. -t 30m)
 -p      +   number of processors requested. Use -p 0 to not specify processors
             Note: in sge, the parallelization type is smp by default, use -tp to specify it (e.g. -tp shm)
 
 -bin    +   in every job, the PATH variable is set to include this folder before any other
 -H      +   file with a header command, that is executed in every job before the input commands
 -F      +   file with a footer command, that is executed in every job after the input commands
--joe        join std output and error logfiles; so that every job produce a single output file
--sl         use a single log file for all jobs, instead of one output and one error per job
+-joe        join std output and error logs; so that every job produce a single output file
+-sl         use single log  for all jobs, instead of 1 out, 1 err per job (has risk of missing output)
 -e          do not export the current environment variables in the job (do not use option -V in qsub)
 -email  +   email provided when submitting job
 -E      +   send an email in conditions determined by the argument. Multiple arguments can be concatenated, e.g. -E abe
@@ -84,8 +84,9 @@ Usage #2 (clusters of jobs)     cluster_job.py input_file [output_folder] [name_
 -r     s-e  in array mode only, defines range of jobs executed (start-end). Wraps qsub option -t. Defaults to all jobs
 When array mode is off, options -n and -c are available to control dynamically job name and content. See advanced help with -h full
 
--qsub | -Q  submit the jobs 
+-qsub | -Q  submit the jobs with qsub (sge) or sbatch (slurm)
 -so         options to submit; provided directly to qsub (sge) or sbatch (slurm). Use quotes, e.g. -so " -tc 5 "
+-srun       slurm only; prefix each command line by "srun "
 -f          force overwrite of jobs folder if existing. By default, it prompts.
 
 -print_opt     prints default values for all options
@@ -252,7 +253,11 @@ def main(args={}):
   queue_name=opt['q']
   if queue_name in queue_synonyms: queue_name=queue_synonyms[queue_name]
   time_limit_minutes=None
-  if opt['t']:   time_limit_minutes=int(opt['t'][:-1])  if str(opt['t']).endswith('m') else int(opt['t'])*60
+  if opt['t']:   
+    if   str(opt['t']).endswith('m'):       time_limit_minutes=int(opt['t'][:-1])  
+    elif str(opt['t']).endswith('d'):       time_limit_minutes=int(opt['t'][:-1])*60*24
+    elif str(opt['t']).endswith('h'):       time_limit_minutes=int(opt['t'][:-1])*60
+    else:                                 time_limit_minutes=int(opt['t'])*60
   additional_options=''
 
   if   opt['sys']=='sge':
@@ -303,6 +308,7 @@ def main(args={}):
                                           logout=logout, logerr=logerr)
     elif opt['sys']=='slurm':
       append_add='\n#SBATCH --open-mode=append'  if opt['sl'] else ''
+      if opt['srun']: cmd='\n'.join( map(lambda x:'srun '+x, [i.strip() for i in cmd.split('\n') if i.strip()] ) )
       header=slurm_header_single_job.format(email=email, additional_options=additional_options + append_add , queue_line=queue_line, 
                                             time_line=time_line, name=name, outfile=outfile, cpus=cpu_specs, mem=mem,
                                             logout=logout, logerr=logerr)
@@ -342,6 +348,7 @@ def main(args={}):
                                            logout=logout, logerr=logerr,
                                             range_str='{}-{}'.format(s,e)) 
       exec_cmd="""awk -v task_id=$SLURM_ARRAY_TASK_ID -F"#" 'BEGIN{pat="^#" task_id "# "}$0 ~ pat{system(substr($0, length($2)+4))}' """+outfile+'\n'
+      if opt['srun']: cmd='\n'.join( map(lambda x:'srun '+x, [i.strip() for i in cmd.split('\n') if i.strip()] ) )
 
     out_text=header+init_command.rstrip('\n')+'\n'+ exec_cmd + join([ '#'+str(index+1)+'# '+cmd.rstrip('\n') for index, cmd in enumerate(cmd_list)], '\n' )+     footer_command
     write_to_file(out_text, outfile)
