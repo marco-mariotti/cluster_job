@@ -19,7 +19,7 @@ sge_header_template="""#!/bin/bash
 #$ -cwd
 #$ -M {email} {queue_line}{time_line}{additional_options}
 #$ -N {name}
-#$ -l virtual_free={mem}G {cpus} 
+#$ -l virtual_free={mem}G {cpus}
 """
 sge_header_single_job=sge_header_template+"""#$ -e {logerr}
 #$ -o {logout}
@@ -33,7 +33,7 @@ sge_header_array_job=sge_header_template+"""#$ -e {logerr}
 sge_pe_template=  "\n#$ -pe {tp} {procs}"   ## for n of processors; not available in all systems
 slurm_pe_template="\n#SBATCH -c {procs}"   ## for n of processors; not available in all systems
 
-slurm_header_template="""#!/bin/bash       
+slurm_header_template="""#!/bin/bash
 #SBATCH -J {name} {queue_line}{time_line}{additional_options}{cpus}
 #SBATCH --mail-user={email}
 #SBATCH --mem={mem}G
@@ -79,7 +79,7 @@ Usage #2 (clusters of jobs)     cluster_job.py input_file [output_folder] [name_
 -e          do not export the current environment variables in the job (do not use option -V in qsub)
 -email  +   email provided when submitting job
 -E      +   send an email in conditions determined by the argument. Multiple arguments can be concatenated, e.g. -E abe
-        b:  at the beginning of the job;          e:  end of the job; 
+        b:  at the beginning of the job;          e:  end of the job;
         a:  if aborted (or rescheduled in sge);   s:  suspended <sge only>;     v:  verbose, mails for anything
 -r     s-e  in array mode only, defines range of jobs executed (start-end). Wraps qsub option -t. Defaults to all jobs
 When array mode is off, options -n and -c are available to control dynamically job name and content. See advanced help with -h full
@@ -253,8 +253,8 @@ def main(args={}):
   queue_name=opt['q']
   if queue_name in queue_synonyms: queue_name=queue_synonyms[queue_name]
   time_limit_minutes=None
-  if opt['t']:   
-    if   str(opt['t']).endswith('m'):       time_limit_minutes=int(opt['t'][:-1])  
+  if opt['t']:
+    if   str(opt['t']).endswith('m'):       time_limit_minutes=int(opt['t'][:-1])
     elif str(opt['t']).endswith('d'):       time_limit_minutes=int(opt['t'][:-1])*60*24
     elif str(opt['t']).endswith('h'):       time_limit_minutes=int(opt['t'][:-1])*60
     else:                                 time_limit_minutes=int(opt['t'])*60
@@ -271,16 +271,16 @@ def main(args={}):
     if not opt['e']:      additional_options+='\n#$ -V '
     ## cpus
     cpu_specs=sge_pe_template.format(procs=opt['p'], tp=opt['tp'])     if opt['p'] else ''
-   
+
   elif opt['sys']=='slurm':
     ## queue or partition
     queue_line= "\n#SBATCH -p {}".format(queue_name) if queue_name else ''
     ## time constraint
     time_line=  '\n#SBATCH -t 0-{h}:{m}'.format(h=time_limit_minutes/60, m=time_limit_minutes%60)  if not time_limit_minutes is None else ''
     ## email
-    if opt['E']:          
+    if opt['E']:
       sge_mail_codes2slurm_code={'a':'FAIL', 'b':'BEGIN', 'e':'END', 'v':'ALL'}
-      for code in opt['E']: 
+      for code in opt['E']:
         if not code in sge_mail_codes2slurm_code: raise notracebackException, "ERROR this -E option is not valid for slurm: {}".format(code)
         additional_options+='\n#SBATCH --mail-type={}'.format(sge_mail_codes2slurm_code[code])
     ## environmental vars
@@ -303,13 +303,13 @@ def main(args={}):
 
     write('Writing file: '+outfile)
     if   opt['sys']=='sge':
-      header=sge_header_single_job.format(email=email, additional_options=additional_options, queue_line=queue_line, 
+      header=sge_header_single_job.format(email=email, additional_options=additional_options, queue_line=queue_line,
                                           time_line=time_line, name=name, outfile=outfile, cpus=cpu_specs, mem=mem,
                                           logout=logout, logerr=logerr)
     elif opt['sys']=='slurm':
       append_add='\n#SBATCH --open-mode=append'  if opt['sl'] else ''
       if opt['srun']: cmd='\n'.join( map(lambda x:'srun '+x, [i.strip() for i in cmd.split('\n') if i.strip()] ) )
-      header=slurm_header_single_job.format(email=email, additional_options=additional_options + append_add , queue_line=queue_line, 
+      header=slurm_header_single_job.format(email=email, additional_options=additional_options + append_add , queue_line=queue_line,
                                             time_line=time_line, name=name, outfile=outfile, cpus=cpu_specs, mem=mem,
                                             logout=logout, logerr=logerr)
 
@@ -317,37 +317,38 @@ def main(args={}):
     if opt['qsub']:
       write(' \tsubmitting file!')
       if   opt['sys']=='sge':    bbash('qsub   {} {} '.format(add_options,  outfile))
-      elif opt['sys']=='slurm':  bbash('sbatch {} {} '.format(add_options,  outfile)) 
+      elif opt['sys']=='slurm':  bbash('sbatch {} {} '.format(add_options,  outfile))
     write('', 1)
 
   def write_array_job(cmd_list, name, outfile, s,e, output_folder):
     """ Takes the command list, plus all other variables computed and available in namespace, prepares an array file and submit it if necessary"""
+    exec_cmd_tmpl="""awk -v task_id=${} -F"#" 'BEGIN{{pat="^#" task_id "# "}}$0 ~ pat{{gsub(/^\s+/,"",$3);print $3 | "/bin/bash -l"}}' """+outfile+'\n'
     write('Writing array file ('+str(len(cmd_list))+' jobs): '+outfile)
     if   opt['sys']=='sge':
       logout='{outfile}.$TASK_ID.{suf}'.format(outfile=outfile, suf=suffix_out)
       logerr='{outfile}.$TASK_ID.{suf}'.format(outfile=outfile, suf=suffix_err)
-      if opt['sl']: 
+      if opt['sl']:
         logout='{outfile}.{suf}'.format(outfile=outfile, suf=suffix_out)
         logerr='{outfile}.{suf}'.format(outfile=outfile, suf=suffix_err)
 
-      header=sge_header_array_job.format(email=email, additional_options=additional_options, queue_line=queue_line, 
+      header=sge_header_array_job.format(email=email, additional_options=additional_options, queue_line=queue_line,
                                           time_line=time_line, name=name, outfile=outfile, cpus=cpu_specs, mem=mem,
                                           logout=logout, logerr=logerr,
                                           range_str='{}-{}'.format(s,e))
-      exec_cmd="""awk -v task_id=$SGE_TASK_ID -F"#" 'BEGIN{pat="^#" task_id "# "}$0 ~ pat{system(substr($0, length($2)+4))}' """+outfile+'\n'
+      exec_cmd=exec_cmd_tmpl.format("SGE_TASK_ID")
     elif opt['sys']=='slurm':
       logout='{outfile}.%a.LOG'.format(outfile=outfile)
       logerr='{outfile}.%a.ERR'.format(outfile=outfile)
-      if opt['sl']: 
+      if opt['sl']:
         logout='{outfile}.{suf}'.format(outfile=outfile, suf=suffix_out)
         logerr='{outfile}.{suf}'.format(outfile=outfile, suf=suffix_err)
-      append_add='\n#SBATCH --open-mode=append'  if opt['sl'] else ''        
+      append_add='\n#SBATCH --open-mode=append'  if opt['sl'] else ''
 
-      header=slurm_header_array_job.format(email=email, additional_options=additional_options+append_add, queue_line=queue_line, 
+      header=slurm_header_array_job.format(email=email, additional_options=additional_options+append_add, queue_line=queue_line,
                                             time_line=time_line, name=name, outfile=outfile, cpus=cpu_specs, mem=mem,
                                            logout=logout, logerr=logerr,
-                                            range_str='{}-{}'.format(s,e)) 
-      exec_cmd="""awk -v task_id=$SLURM_ARRAY_TASK_ID -F"#" 'BEGIN{pat="^#" task_id "# "}$0 ~ pat{system(substr($0, length($2)+4))}' """+outfile+'\n'
+                                            range_str='{}-{}'.format(s,e))
+      exec_cmd=exec_cmd_tmpl.format("SLURM_ARRAY_TASK_ID")
       if opt['srun']: cmd='\n'.join( map(lambda x:'srun '+x, [i.strip() for i in cmd.split('\n') if i.strip()] ) )
 
     out_text=header+init_command.rstrip('\n')+'\n'+ exec_cmd + join([ '#'+str(index+1)+'# '+cmd.rstrip('\n') for index, cmd in enumerate(cmd_list)], '\n' )+     footer_command
@@ -355,7 +356,7 @@ def main(args={}):
     if opt['qsub']:
       write(' \tsubmitting file!')
       if   opt['sys']=='sge':    bbash('qsub   {} {} '.format(add_options,  outfile))
-      elif opt['sys']=='slurm':  bbash('sbatch {} {} '.format(add_options,  outfile)) 
+      elif opt['sys']=='slurm':  bbash('sbatch {} {} '.format(add_options,  outfile))
 
   #####################
   if array_mode:
