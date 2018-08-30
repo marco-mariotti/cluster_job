@@ -322,7 +322,7 @@ def main(args={}):
 
   def write_array_job(cmd_list, name, outfile, s,e, output_folder):
     """ Takes the command list, plus all other variables computed and available in namespace, prepares an array file and submit it if necessary"""
-    exec_cmd_tmpl="""CMD=$(awk -v task_id=${} -F"#" 'BEGIN{{pat="^#" task_id "# "}}$0 ~ pat{{gsub(/^\s+/,"",$3);print $3}}' """+outfile+')\n$CMD\n'
+    exec_cmd_tmpl="""awk -v task_id=${} -F"#" 'BEGIN{{pat="^#" task_id "# "}}$0 ~ pat{{gsub(/^\s+/,"",$3);print $3 | "/bin/bash -l"}}' """+outfile+'\n'
     write('Writing array file ('+str(len(cmd_list))+' jobs): '+outfile)
     if   opt['sys']=='sge':
       logout='{outfile}.$TASK_ID.{suf}'.format(outfile=outfile, suf=suffix_out)
