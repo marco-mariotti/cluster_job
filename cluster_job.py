@@ -322,6 +322,7 @@ def main(args={}):
 
   def write_array_job(cmd_list, name, outfile, s,e, output_folder):
     """ Takes the command list, plus all other variables computed and available in namespace, prepares an array file and submit it if necessary"""
+    exec_cmd_tmpl="""CMD=$(awk -v task_id=${} -F"#" 'BEGIN{{pat="^#" task_id "# "}}$0 ~ pat{{gsub(/^\s+/,"",$3);print $3}}' """+outfile+')\n$CMD\n'
     write('Writing array file ('+str(len(cmd_list))+' jobs): '+outfile)
     if   opt['sys']=='sge':
       logout='{outfile}.$TASK_ID.{suf}'.format(outfile=outfile, suf=suffix_out)
@@ -334,7 +335,7 @@ def main(args={}):
                                           time_line=time_line, name=name, outfile=outfile, cpus=cpu_specs, mem=mem,
                                           logout=logout, logerr=logerr,
                                           range_str='{}-{}'.format(s,e))
-      exec_cmd="""awk -v task_id=$SGE_TASK_ID -F"#" 'BEGIN{pat="^#" task_id "# "}$0 ~ pat{system(substr($0, length($2)+4))}' """+outfile+'\n'
+      exec_cmd=exec_cmd_tmpl.format("SGE_TASK_ID")
     elif opt['sys']=='slurm':
       logout='{outfile}.%a.LOG'.format(outfile=outfile)
       logerr='{outfile}.%a.ERR'.format(outfile=outfile)
@@ -347,7 +348,7 @@ def main(args={}):
                                             time_line=time_line, name=name, outfile=outfile, cpus=cpu_specs, mem=mem,
                                            logout=logout, logerr=logerr,
                                             range_str='{}-{}'.format(s,e))
-      exec_cmd="""awk -v task_id=$SLURM_ARRAY_TASK_ID -F"#" 'BEGIN{pat="^#" task_id "# "}$0 ~ pat{system(substr($0, length($2)+4))}' """+outfile+'\n'
+      exec_cmd=exec_cmd_tmpl.format("SLURM_ARRAY_TASK_ID")
       if opt['srun']: cmd='\n'.join( map(lambda x:'srun '+x, [i.strip() for i in cmd.split('\n') if i.strip()] ) )
 
     out_text=header+init_command.rstrip('\n')+'\n'+ exec_cmd + join([ '#'+str(index+1)+'# '+cmd.rstrip('\n') for index, cmd in enumerate(cmd_list)], '\n' )+     footer_command
