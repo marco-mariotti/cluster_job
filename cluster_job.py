@@ -1,8 +1,8 @@
-#! /usr/bin/python -u
+#! /usr/bin/env python2.7
 __author__  = "Marco Mariotti"
-__email__   = "marco.mariotti@crg.cat"
+__email__   = "marco.mariotti@ub.edu"
 __licence__ = "GPLv3"
-__version__ = "0.3"
+__version__ = "0.5"
 from string import *
 import sys
 import traceback
@@ -11,7 +11,7 @@ from MMlib import *
 #### default options:
 def_opt= {'i':0,  'o':0, 'n':None, 'c':None, 'H':0, 'qsub':0, 'p':1, 'm':12, 'N':0, 't':6, 'v':0, 'n_lines':0, 'n_jobs':0, 'F':0, 'r':None,
 'q':'queue1,queue2', 'bin':'~/bin', 'email':'youremail@domain.com', 'E':'a', 'e':0, 'f':0, 'x':0, 'joe':0, 'sl':0, 'so':'', 'srun':0,
-'tp':'smp', 'sys':'sge', 'q_syn':'S=queue1,queue2;L=queue3,queue2' }
+'pe':'smp', 'sys':'sge', 'q_syn':'S=queue1,queue2;L=queue3,queue2', 'peq':'queue_arg1=pe_type1;queue_arg2=pe_type2' }
 
 #### templates:
 sge_header_template="""#!/bin/bash
@@ -29,9 +29,8 @@ sge_header_array_job=sge_header_template+"""#$ -e {logerr}
 #$ -t {range_str}
 """
 
-
-sge_pe_template=  "\n#$ -pe {tp} {procs}"   ## for n of processors; not available in all systems
-slurm_pe_template="\n#SBATCH -c {procs}"   ## for n of processors; not available in all systems
+sge_pe_template=  "\n#$ -pe {pe} {procs}"   ## for n of processors
+slurm_pe_template="\n#SBATCH -c {procs}"   
 
 slurm_header_template="""#!/bin/bash       
 #SBATCH -J {name} {queue_line}{time_line}{additional_options}{cpus}
@@ -48,57 +47,67 @@ slurm_header_array_job= slurm_header_template+"""#SBATCH -e {logerr}
 """
 
 
-help_msg="""Program to split and manage command lines, to write job files to be submitted to a SGE or Slurm cluster. The input file must contain one line for each bash command that can be parallelized.
-By default, an array job file is prepared inside the output folder with one entry for each line in input. Otherwise, the lines are split into a number of job files according to options -n_jobs (-nj) or -n_lines (-nl).
-Option -N can be used to give a name to the jobs: if provided argument is "JobZ" for example, job names will be JobZ.1, JobZ.2 etc.
-Other options can be used to set job variables, such as the queue name, memory and cpu requirements etc.
+help_msg="""Cluster job: utility to split and manage command lines, writing "job" files ready to be submitted to a SGE or Slurm cluster.
 
-Usage #1 (array mode, default)  cluster_job.py input_file [output_folder] [name_prefix]
-Usage #2 (clusters of jobs)     cluster_job.py input_file [output_folder] [name_prefix] [-n_jobs N | -n_lines M]
+The input file must contain one line for each bash command that can be parallelized.
+By default, an array job file is prepared inside the output folder with one entry for each line in input. 
+Otherwise, the lines are split into a number of jobs according to options -n_jobs (-nj) or -n_lines (-nl).
 
-*** Options:
+Usage #1 (array mode, default)  cluster_job.py input_file [output_folder] [job_name]
+Usage #2 (clusters of jobs)     cluster_job.py input_file [output_folder] [job_name] [-n_jobs N | -n_lines M]
+
+*** Basic options:
 -i      +   input file. Use '-' for standard input
--o      +   output folder. Default is input file name plus ".jbs"
--N      +   define name of jobs with this prefix. Default is input file name
--sys    +   cluster system; possible values: sge (default) or slurm
+-o      +   output folder. Default is input file name plus ".jbs/"
+-N      +   define name of jobs (numerical suffixes are added). Default is input file name
+-sys    +   cluster system; possible values: "sge" (default) or "slurm"
+-n_lines | -nl +  set this to have X lines of input commands per job. Turns off array mode
+-n_jobs  | -nj +  set this to have a number of jobs X. Overrides -n_lines and turns off array mode
+-qsub | -Q  submit the jobs with qsub (sge) or sbatch (slurm)
 
--n_lines | -nl +  set this to have x lines of input commands in each job. Turns off array mode
--n_jobs  | -nj +  set this to have a number of jobs x. Overrides -n_lines and turns off array mode
-
--q      +   queue name(s), comma separated; synonyms can be also used. These can be set with -q_syn. See -h default
+** Job properties:
+-q      +   queue name(s), comma separated; synonyms can be used (see -q_syn or run with -h default)
 -m      +   GB of memory requested
--t      +   time limit requested in hours  (add m suffix to make it minutes, or d to make it days; e.g. -t 30m)
--p      +   number of processors requested. Use -p 0 to not specify processors
-            Note: in sge, the parallelization type is smp by default, use -tp to specify it (e.g. -tp shm)
+-t      +   time limit requested in hours  (add m suffix for minutes, or d for days; e.g. -t 30m)
+-p      +   number of processors requested (default: 1). Use -p 0 to not specify processors
 
+** Utilities:
 -bin    +   in every job, the PATH variable is set to include this folder before any other
--H      +   file with a header command, that is executed in every job before the input commands
--F      +   file with a footer command, that is executed in every job after the input commands
+-H / -F +   file with header (-H) or footer (-F) command, executed in each job before or after input commands
 -joe        join std output and error logs; so that every job produce a single output file
--sl         use single log  for all jobs, instead of 1 out, 1 err per job (has risk of missing output)
--e          do not export the current environment variables in the job (do not use option -V in qsub)
+-sl         use single log for all jobs, instead of 1 out, 1 err per job
+-e          do not export the current environment in the job (i.e. don't use option -V in qsub)
 -email  +   email provided when submitting job
--E      +   send an email in conditions determined by the argument. Multiple arguments can be concatenated, e.g. -E abe
+-E      +   send an email in conditions determined by the argument. Multiple ones can be concatenated, e.g. -E abe
         b:  at the beginning of the job;          e:  end of the job; 
         a:  if aborted (or rescheduled in sge);   s:  suspended <sge only>;     v:  verbose, mails for anything
--r     s-e  in array mode only, defines range of jobs executed (start-end). Wraps qsub option -t. Defaults to all jobs
+-r     s-e  in array mode only, defines range of jobs executed (start-end). Wraps qsub option -t
 When array mode is off, options -n and -c are available to control dynamically job name and content. See advanced help with -h full
 
--qsub | -Q  submit the jobs with qsub (sge) or sbatch (slurm)
--so         options to submit; provided directly to qsub (sge) or sbatch (slurm). Use quotes, e.g. -so " -tc 5 "
--srun       slurm only; prefix each command line by "srun "
--f          force overwrite of jobs folder if existing. By default, it prompts.
+** SGE system only:
+-pe     +   parallelization environment for SGE (default: smp); taken from -peq if provided
+-peq    +   defining which -pe to use based on the -q argument; format: "QUEUE_X:pe1;SYNONYM_Y:pe2"
 
--print_opt     prints default values for all options
--h | --help    print this help and exit
-               use "-h default" for instructions on how to set default values for cluster_job
-               use "-h full" for more usage examples and help on -n nameEXPR and -c jobEXPR
+** Slurm system only:
+-srun       slurm only; prefix each command line by "srun "
+
+** Other options:
+-so           options to submit, provided directly to qsub (sge) or sbatch (slurm). Use quotes, e.g. -so " -tc 5 "
+-f            force overwrite of jobs folder if existing. By default, it prompts
+-qsyn   +     defining synonyms for -q, using format: "SYN_NAME=queue1;OTHER_SYN=queue2,queue3"
+-print_opt    prints default values for all options
+-h | --help   print this help and exit
+              use "-h default" to learn how to customize cluster_job (set default values)
+              use "-h full" for more usage examples and help on -n nameEXPR and -c jobEXPR
 """
 
-advanced_help="""##### Advanced usage
-When job array mode is off (cluster jobs mode), both the name of the jobs and the command lines in the job files can be provided as expressions evaluated in python. In expressions, you manipulate a variable called x, which is the whole line of input file. If the lines in the input file contain tab characters, the fields are also split in attributes of x: x.a, x.b, x.c and so on.
+advanced_help="""##### Advanced usage: dynamic evaluation
+When job array mode is off, both the job name and its command lines can be provided as expressions evaluated in python. 
+In expressions, you manipulate a variable called x, which is the whole line of input file. 
+If input lines contain tab characters, the fields are also split in attributes of x: x.a, x.b, x.c and so on.
+
 The -c jobEXPR builds each command line included in any job file.
-The -n nameEXPR determines the name of the job, thus also its name of the job file in the output folder. Note that if multiple lines per input are included in a job file, the name of the job file will be derived by the last line included.
+The -n nameEXPR determines the name of the job (thus also output job file names). If multiple lines per input are included in a job file, its name is derived from the last line included.
 In the expressions, you can use the variables name (job name), out (job file written), or index (line index in the input file), n_job (the index of the current job file).
 Expressions can be combined with input file structures created ad hoc. A simple use of this is a tab separated input file with job name as first field, and the command line as second field. You can use such file with  -n x.a  -c x.b
 More examples:
@@ -140,21 +149,25 @@ This will produce 4 files:
 """
 
 set_default_help="""######## How to set default values for options
-Typically, each user of this program will use cluster_job.py with the same options, adapted to the system.
-There are two ways to achieve this.
-1. (recommended) With an alias.
-Set an alias in your bash environment to point to the default cluster_job.py command line that you want to use. Through this you can also shorten the call. If for example you want call your alias C, you have something like:
-$ alias C="cluster_job.py -email youremail@domain.com  -bin ~/your_bin/  -q my_default_queue -m 12 -p 1 -t 6 -q_syn  'A=queue1,queue2;B=queue3,queue4' "
-including all options that you want to set as defaults. Note the syntax of option -q_syn to define queue keyword shortcuts. In the example, this allows then to use A as synonym for queue1,queue2 and B as synonym of queue3,queue4.
-After this, you call the program with all your custome default values simply with:   C -i input_file [other options]
-We suggest to include your custom alias definition in your .bashrc file, so that it will be available in any terminal you open.
+Typically, each user runs cluster_job.py with the same options, adapted to their system. There are two ways to achieve this.
+* 1. (recommended) With an alias.
+Set an alias in your bash environment to point to the default cluster_job.py command that you want to use, thus shortening your typical call. For example, to use "C" to run cluster job, use:
 
-2. Editing the script
+alias C="cluster_job.py -email youremail@domain.com  -bin ~/your_bin/  -q my_default_queue -m 12 -p 1 -t 6 -q_syn  'A=queue1,queue2;B=queue3,queue4' "
+
+including all options that you want to set as defaults. Note the syntax of option -q_syn to define queue keyword shortcuts. In the example, this allows then to use A as synonym for queue1,queue2 and B as synonym of queue3,queue4.
+Add this alias definition in your ~/.bash_profile file, to make it available in all your terminals.
+After this setup, you can invoke cluster_job with all your custom default values simply with:  
+
+C -i input_file [other options]
+
+* 2. Editing the script
 If you have permissions, you may instead open directly your copy of cluster_job.py and modify it. All default options are defined in the very beginning of the file, through "header" variables, and a dictionary called def_opt.
 """
 not_my_email_err="""Hey! get your own -email ;) \n\nHere's the help page to avoid typing this option every time:\n\n"""+set_default_help
 
-command_line_synonyms={'Q':'qsub', 'nj':'n_jobs', 'nl':'n_lines', 'force':'f'}
+command_line_synonyms={'Q':'qsub', 'nj':'n_jobs', 'nl':'n_lines', 'force':'f',
+                       'tp':'pe'}
 
 #########################################################
 ###### start main program function
@@ -187,8 +200,22 @@ def main(args={}):
     check_file_presence(input_file, 'input_file', notracebackException)
     input_file_h=open(input_file)
 
-  if opt['email']=='youremail@domain.com' and bbash('whoami')!='mmariotti' and opt['E']: raise notracebackException, not_my_email_err
+  #if opt['email']=='youremail@domain.com' and bbash('whoami')!='mmariotti' and opt['E']: raise notracebackException, not_my_email_err
 
+  ### reading customization
+  queue_synonyms={}
+  if opt['q_syn']:
+    for assign_piece in opt['q_syn'].split(';'):
+      syn_name, queue =assign_piece.split('=') #queue can be comma separated but we pass it as it is
+      queue_synonyms[syn_name]=queue
+
+  pe_table={}
+  if opt['peq']:
+    for assign_piece in opt['peq'].split(';'):
+      queue, pe =assign_piece.split('=') 
+      pe_table[queue]=pe
+
+  ### Reading input file
   cmd_lines= [ line.strip() for line in input_file_h if line.strip() and not line.strip().startswith("#") ]    ## loading whole file
   # determining number of jobs, number of lines
   tot_lines=len(cmd_lines)
@@ -243,13 +270,7 @@ def main(args={}):
   footer_command=''
   if opt['F']:      footer_command+= join([ line.strip() for line in open(opt['F']) ], '\n')  ##adding footer lines
 
-
-  ### determining the queue argument.
-  queue_synonyms={}
-  if opt['q_syn']:
-    for assign_piece in opt['q_syn'].split(';'):
-      syn_name, queue =assign_piece.split('=') #queue can be comma separated but we pass it as it is
-      queue_synonyms[syn_name]=queue
+  ## determining queue
   queue_name=opt['q']
   if queue_name in queue_synonyms: queue_name=queue_synonyms[queue_name]
   time_limit_minutes=None
@@ -270,7 +291,8 @@ def main(args={}):
     ## environmental vars
     if not opt['e']:      additional_options+='\n#$ -V '
     ## cpus
-    cpu_specs=sge_pe_template.format(procs=opt['p'], tp=opt['tp'])     if opt['p'] else ''
+    parallelization=opt['pe']    if not queue_name in pe_table else pe_table[queue_name]
+    cpu_specs=sge_pe_template.format(procs=opt['p'], pe=parallelization)     if opt['p'] else ''
    
   elif opt['sys']=='slurm':
     ## queue or partition
