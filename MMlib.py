@@ -8,6 +8,8 @@ try:      import cPickle as pickle
 except:   import pickle
 from copy import copy, deepcopy
 from math import log as math_log, sqrt
+import shlex
+
 import random
 NUMBERS='0123456789'  
 DNA_LETT='ACGT'
@@ -99,7 +101,7 @@ def bash_pipe(cmnd, print_it=0, return_popen=0, stdin=None):
   if 'bin_folder' in globals(): 
     if not bin_folder  == os.environ['PATH'].split(':')[0]:      os.environ['PATH']=str(bin_folder)+':'+os.environ['PATH']    
   if print_it: write(cmnd, 1)
-  s=subprocess.Popen(cmnd.split(), stdout=subprocess.PIPE, stdin=stdin, env=os.environ)
+  s=subprocess.Popen(shlex.split(cmnd), stdout=subprocess.PIPE, stdin=stdin, env=os.environ)
   if return_popen: return s
   else:    return s.stdout
 
