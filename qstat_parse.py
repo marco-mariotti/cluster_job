@@ -2,35 +2,31 @@
 from string import *
 import sys
 from commands import *
-sys.path.insert(0, "/users/rg/mmariotti/libraries/")
-sys.path.append('/users/rg/mmariotti/scripts')
 from MMlib import *
-
 ### allowing this to be piped without weird python complains
 import signal
 signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 def_opt= {'temp':'/users-d3/mmariotti/temp', 
           'i':0, 'o':0, 'v':0,
-          'f':'{id:9} {state:3} {tasks:12} {queue:12} {node:30} {name}',
-          'fa':'{owner:12} {id:9} {state:3} {tasks:12} {queue:12} {node:30} {name}',          
-          'q':'', 'a':0}
-
-          #'a':'print j.id.ljust(9)+" "+j.state.ljust(3)+" "+j.tasks.ljust(12)+" "+j.queue.ljust(12)+" "+j.node.ljust(30)+" " +j.name'}
+          'f':            '{id:9} {state:3} {slots:3} {tasks:6} {queue:12} {node:18} {name}',
+          'fa':'{owner:12} {id:9} {state:3} {slots:3} {tasks:6} {queue:12} {node:18} {name}',          
+          'q':0, 'a':0, 'x':''}
 
 help_msg="""qstat_parse.py: Utility to visualize the output of qstat -xml in a convenient way. 
 For a fresh qstat run, run this program without input.
 To read text from an input, use: 
  -i inputfile    (use "-i -" for standard input) 
 
-
  -f provides the output format as a python string interpreted by .format() 
     These attributes of each job can be used: 
     id name state   owner   priority   queue   node   tasks
     Default: """ + def_opt['f'] + """
 
--q  if qstat is run (no -i provided), use this to provide any qstat options
--a  add option ' -u "*" ' to qstat, to display jobs for all users. If -f is not provided, owner is also displayed"""
+-x  if qstat is run (no -i provided), use this to provide any qstat options
+-a  add option ' -u "*" ' to qstat, to display jobs for all users. If -f is not provided, owner is also displayed
+-q  display queue usage instead; simply wraps 'qstat -g c'
+"""
 
 command_line_synonyms={}
 
@@ -50,13 +46,17 @@ def main(args={}):
   set_MMlib_var('opt', opt)
   #global temp_folder; temp_folder=Folder(random_folder(opt['temp'])); test_writeable_folder(temp_folder, 'temp_folder'); set_MMlib_var('temp_folder', temp_folder)
   #global split_folder;    split_folder=Folder(opt['temp']);               test_writeable_folder(split_folder); set_MMlib_var('split_folder', split_folder) 
-  #checking input
 
+  # queueu usage mode
+  if opt['q']:
+    write(bbash('qstat -g c '+opt['x']), 1)
+    sys.exit()
+  
   ## setting input. if none, running qstat
   output_format=opt['f']
   if opt['i']==0:
     
-    qstat_options=opt['q']
+    qstat_options=opt['x']
     if opt['a']:
       qstat_options+=' -u \"*\" '
       if output_format==def_opt['f']: output_format=opt['fa']
@@ -74,6 +74,7 @@ def main(args={}):
     if '<job_list' in c:
       j=job()
       j.tasks=''
+      j.slots=''
     elif '<JB_job_number' in c:      j.id=c.split('>')[1].split('<')[0]
     elif '<JAT_prio'  in  c:      j.priority=c.split('>')[1].split('<')[0]
     elif '<JB_name'  in  c:      j.name=c.split('>')[1].split('<')[0]    
@@ -85,7 +86,8 @@ def main(args={}):
       except: j.node=''
     elif '<tasks' in c:
       j.tasks = c.split('>')[1].split('<')[0]
-
+    elif '<slots' in c:
+      j.slots = c.split('>')[1].split('<')[0]
 
     if '</job_list>' in c:   
       #exec(opt['a'])
